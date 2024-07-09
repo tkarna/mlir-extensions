@@ -138,7 +138,7 @@ struct FromMemRefLowering
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
 
     rewriter.replaceOpWithNewOp<::mlir::bufferization::ToTensorOp>(
-        op, adaptor.getInput());
+        op, adaptor.getInput(), /*restrict=*/true);
 
     return ::mlir::success();
   }
@@ -206,8 +206,9 @@ struct SubviewLowering
     // assert(resType.getShape() == dstTnsrType.getShape());
 
     // convert result to tensor
-    auto res = rewriter.create<::mlir::bufferization::ToTensorOp>(loc, sw,
-                                                                  false, true);
+    auto res = rewriter.create<::mlir::bufferization::ToTensorOp>(
+        loc, sw,
+        /*restrict=*/true, /*writable=*/true);
     rewriter.replaceOp(op, res.getResult());
 
     return ::mlir::success();
@@ -538,7 +539,8 @@ struct CopyLowering
     }
     // convert memref to tensor
     auto res = rewriter.create<::mlir::bufferization::ToTensorOp>(
-        loc, retArTyp.getTensorType(), mr, false, true);
+        loc, retArTyp.getTensorType(), mr, /*restrict=*/true,
+        /*writable=*/true);
     rewriter.replaceOp(op, res);
 
     return ::mlir::success();
@@ -1269,7 +1271,8 @@ struct ConvertNDArrayToLinalgPass
         auto mrtype = mlir::dyn_cast<::mlir::MemRefType>(itype);
         if (mrtype && mlir::isa<::mlir::RankedTensorType>(type)) {
           return builder
-              .create<::mlir::bufferization::ToTensorOp>(loc, type, input)
+              .create<::mlir::bufferization::ToTensorOp>(loc, type, input,
+                                                         /*restrict=*/true)
               .getResult();
         }
       }
