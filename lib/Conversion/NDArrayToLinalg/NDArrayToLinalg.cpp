@@ -654,25 +654,16 @@ struct ReshapeLowering
 
     auto loc = op.getLoc();
     auto src = adaptor.getSource();
-    auto srcTnsr = mlir::cast<::mlir::TensorType>(src.getType());
     auto shape = adaptor.getShape();
-    auto elTyp = srcTnsr.getElementType();
     auto outTyp = retArTyp.getTensorType();
 
     if (adaptor.getCopy().value_or(false)) {
-      auto rank = srcTnsr.getRank();
-      ::imex::ValVec dims(rank);
-      for (int64_t i = 0; i < rank; ++i) {
-        dims[i] = ::mlir::linalg::createOrFoldDimOp(rewriter, loc, src, i);
-      }
-      auto cpy = createEmptyTensor(rewriter, loc, elTyp, dims);
-      auto cpyMR =
-          createToMemRef(loc, rewriter, cpy,
-                         getMemRefType(op.getContext(), rank, elTyp, false));
-      auto srcMR =
-          createToMemRef(loc, rewriter, src, srcArTyp.getMemRefType(src));
-      rewriter.create<::mlir::memref::CopyOp>(loc, srcMR, cpyMR);
-      src = cpy;
+      auto arSrc = op.getSource();
+      auto copyOp =
+          rewriter.create<::imex::ndarray::CopyOp>(loc, srcArTyp, arSrc);
+      auto toTensorOp =
+          rewriter.create<::imex::ndarray::ToTensorOp>(loc, copyOp.getResult());
+      src = toTensorOp.getResult();
     }
 
     auto shapeT = rewriter.create<::mlir::tensor::FromElementsOp>(loc, shape);
