@@ -234,5 +234,22 @@ def TileLoops : Pass<"tile-loops", "::mlir::func::FuncOp"> {
   ];
 }
 
+def LinalgToXeGPU : Pass<"linalg-to-xegpu", "func::FuncOp"> {
+  let summary = "Convert linalg dialect to XeGPU dialect.";
+  let description = [{Lower linalg ops to XeGPU dialect.}];
+  let dependentDialects = [
+    "linalg::LinalgDialect", "gpu::GPUDialect", "xegpu::XeGPUDialect",
+    "scf::SCFDialect", "memref::MemRefDialect", "arith::ArithDialect",
+    "math::MathDialect", "vector::VectorDialect"
+  ];
+  let options = [
+    Option<"kTile", "k-tile", "int64_t",
+           /*default=*/"32", "GEMM tile size for reduction dimension.">,
+    Option<"stages", "stages", "int64_t",
+           /*default=*/"1", "Number of cooperative prefetch stages.">,
+    ListOption<"dpasTile", "dpas-tile", "int64_t",
+               "DPAS register block sizes MxNxK">,
+  ];
+}
 
 #endif // _IMEX_TRANSFORMS_PASSES_TD_INCLUDED_
