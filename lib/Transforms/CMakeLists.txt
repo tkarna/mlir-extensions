@@ -17,6 +17,7 @@ add_mlir_library(IMEXTransforms
   HoistTranspose.cpp
   TileLoops.cpp
   XeVMAttachTarget.cpp
+  LinalgToXeGPU.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/imex/Transforms
