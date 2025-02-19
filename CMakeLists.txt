@@ -8,7 +8,7 @@ endif()
 
 set(IMEX_EXTERNAL_PROJECT_BUILD OFF)
 
-set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} -Wall -Werror -Wnon-virtual-dtor")
+set(CMAKE_CXX_FLAGS " ${CMAKE_CXX_FLAGS} -Wall -Werror -Wnon-virtual-dtor -Wno-error=address")
 
 if(NOT (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR) AND NOT DEFINED MLIR_BINARY_DIR)
     # Building as part of LLVM via the external project mechanism.
@@ -318,6 +318,8 @@ option(IMEX_INCLUDE_DOCS "Generate build targets for the IMEX docs." ON)
 if (IMEX_INCLUDE_DOCS)
     add_subdirectory(docs)
 endif()
+option(IMEX_ENABLE_BINDINGS_PYTHON "Enable IMEX Python Binding" OFF)
+add_subdirectory(python)
 
 # Custom target to install all imex headers
 add_custom_target(imex-headers)
