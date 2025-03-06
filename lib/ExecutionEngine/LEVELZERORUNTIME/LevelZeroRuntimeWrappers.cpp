@@ -172,10 +172,9 @@ private:
 public:
   ze_event_handle_t zeEvent;
 
-  Event(ze_context_handle_t zeContext_, ze_device_handle_t zeDevice_) {
+  Event(ze_context_handle_t zeContext_, ze_device_handle_t zeDevice_,
+        uint32_t index = 0) {
     static EventPool pool(zeContext_);
-
-    static std::atomic<uint32_t> eventIndex{0};
 
     // timestamp and timer resolution is a device properties.
     // They are required to compute the final wall time.
@@ -188,9 +187,9 @@ public:
 
     ze_event_desc_t eventDesc = {
         ZE_STRUCTURE_TYPE_EVENT_DESC, nullptr,
-        eventIndex++, // index
-        0,            // no additional memory/cache coherency required on signal
-        0             // no additional memory/cache coherency required on wait
+        index, // index
+        0,     // no additional memory/cache coherency required on signal
+        0      // no additional memory/cache coherency required on wait
     };
     CHECK_ZE_RESULT(zeEventCreate(pool.zeEventPool, &eventDesc, &zeEvent));
   }
