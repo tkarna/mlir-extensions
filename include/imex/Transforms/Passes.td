@@ -274,4 +274,15 @@ def GpuXeVMAttachTarget: Pass<"xevm-attach-target", "mlir::gpu::GPUModuleOp"> {
 }
 
 
+def GpuInlineConstants : Pass<"gpu-inline-constants", "func::FuncOp"> {
+  let summary = "Inlines constants into GPU launch.";
+  let description = [{
+    Inline constants into GPU launch body to reduce number of parameters
+    and allow further constant propagation after kernel outlining.
+    The pass should be used just before GPU kernel outlining.
+  }];
+  let dependentDialects = ["gpu::GPUDialect",
+                           "arith::ArithDialect"];
+}
+
 #endif // _IMEX_TRANSFORMS_PASSES_TD_INCLUDED_
