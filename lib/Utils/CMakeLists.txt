@@ -7,6 +7,7 @@ add_mlir_library(IMEXUtil
     XeCommon.cpp
     XeArch.cpp
     StructuredOpMatcher.cpp
+    MatcherUtils.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/imex/Utils
