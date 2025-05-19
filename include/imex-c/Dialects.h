@@ -15,12 +15,16 @@
 #define IMEX_C_DIALECTS_H
 
 #include "mlir-c/IR.h"
+#include "mlir/IR/DialectRegistry.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Region, region);
+
+MLIR_CAPI_EXPORTED void
+mlirRegisterIMEXXeGPUTransformOps(::mlir::DialectRegistry &registry);
 
 #ifdef __cplusplus
 }

@@ -18,6 +18,7 @@ extern "C" {
 #endif
 
 MLIR_CAPI_EXPORTED void mlirRegisterAllIMEXPasses() { registerAllPasses(); }
+
 #ifdef __cplusplus
 }
 #endif

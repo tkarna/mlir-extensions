@@ -9,8 +9,14 @@
 
 #include "imex-c/Dialects.h"
 #include "imex/Dialect/Region/IR/RegionOps.h"
+#include "imex/Dialect/XeGPU/TransformOps/XeGPUTransformOps.h"
 #include "mlir/CAPI/Registration.h"
 
 // name, namespace, classname
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Region, region,
                                       imex::region::RegionDialect)
+
+MLIR_CAPI_EXPORTED void
+mlirRegisterIMEXXeGPUTransformOps(::mlir::DialectRegistry &registry) {
+  registerXeGPUTransformOps(registry);
+}

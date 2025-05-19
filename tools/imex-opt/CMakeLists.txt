@@ -15,6 +15,7 @@ set(LIBS
         MLIROptLib
         IMEXTransforms
         IMEXUtil
+        IMEXXeGPUTransformOps
         )
 add_imex_tool(imex-opt imex-opt.cpp)
 llvm_update_compile_flags(imex-opt)

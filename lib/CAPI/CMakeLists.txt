@@ -22,6 +22,7 @@ set(IMEX_ALL_LIBS
   MLIRXeGPUToXeVM
   MLIRXeVMToLLVM
   IMEXUtil
+  IMEXXeGPUTransformOps
   imex_runner_utils
 )
 
@@ -37,8 +38,5 @@ add_mlir_public_c_api_library(ImexCAPI
   Dialects.cpp
   Passes.cpp
   LINK_LIBS PUBLIC
-  IMEXRegionDialect
   ${IMEX_ALL_LIBS}
 )
-target_link_libraries(obj.ImexCAPI PUBLIC ImexInterface)
-set_property(GLOBAL APPEND PROPERTY IMEX_MLIR_LIBS ImexCAPI)
