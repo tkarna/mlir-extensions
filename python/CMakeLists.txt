@@ -40,6 +40,16 @@ declare_mlir_dialect_python_bindings(
     dialects/region.py
   DIALECT_NAME region)
 
+declare_mlir_dialect_extension_python_bindings(
+  ADD_TO_PARENT ImexPythonSources
+  ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/imex_mlir"
+  TD_FILE dialects/XeGPUTransformOps.td
+  SOURCES
+    dialects/transform/xegpu.py
+  DIALECT_NAME transform
+  EXTENSION_NAME xegpu_transform
+)
+
 declare_mlir_python_extension(ImexPythonSources.Extension
   MODULE_NAME _imex_mlir
   ADD_TO_PARENT ImexPythonSources
@@ -64,6 +74,7 @@ add_mlir_python_common_capi_library(ImexPythonCAPI
     ImexPythonSources
     MLIRPythonExtension.RegisterEverything
     MLIRPythonSources.Core
+    MLIRPythonSources.Dialects
     MLIRPythonSources.ExecutionEngine
 )
 
@@ -78,6 +89,7 @@ add_mlir_python_modules(ImexPythonModules
     ImexPythonSources
     MLIRPythonExtension.RegisterEverything
     MLIRPythonSources
+    MLIRPythonSources.Dialects
     MLIRPythonSources.ExecutionEngine
   COMMON_CAPI_LINK_LIBS
     ImexPythonCAPI

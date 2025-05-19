@@ -28,6 +28,7 @@
 #include <mlir/Tools/mlir-opt/MlirOptMain.h>
 
 #include "imex/Dialect/NDArray/Extensions/AllExtensions.h"
+#include <imex/Dialect/XeGPU/TransformOps/XeGPUTransformOps.h>
 #include <imex/InitIMEXDialects.h>
 #include <imex/InitIMEXPasses.h>
 #include <imex/Transforms/Passes.h>
@@ -41,6 +42,7 @@ int main(int argc, char **argv) {
   ::mlir::registerAllExtensions(registry);
   ::imex::registerAllDialects(registry);
   ::imex::ndarray::registerAllExtensions(registry);
+  registerXeGPUTransformOps(registry);
 
   ::mlir::registerAllGPUToLLVMIRTranslations(registry);
   imex::registerConvertXeVMToLLVMInterface(registry);

@@ -9,8 +9,11 @@
 
 #include "imex-c/Dialects.h"
 #include "imex-c/Passes.h"
+#include "imex/Dialect/XeGPU/TransformOps/XeGPUTransformOps.h"
 #include "mlir/Bindings/Python/Nanobind.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"
+#include "mlir/CAPI/IR.h"
+#include "mlir/IR/DialectRegistry.h"
 
 namespace nb = nanobind;
 
@@ -34,4 +37,15 @@ NB_MODULE(_imex_mlir, m) {
         }
       },
       nb::arg("context").none() = nb::none(), nb::arg("load") = true);
+
+  auto transformModule = m.def_submodule("transform");
+  auto transformXeGPUModule = transformModule.def_submodule("xegpu");
+
+  transformXeGPUModule.def(
+      "register_dialect_extension",
+      [](MlirDialectRegistry wrappedRegistry) {
+        mlir::DialectRegistry *registry = unwrap(wrappedRegistry);
+        mlirRegisterIMEXXeGPUTransformOps(*registry);
+      },
+      "registry");
 }
