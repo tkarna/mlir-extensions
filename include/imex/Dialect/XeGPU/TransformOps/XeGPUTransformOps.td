@@ -44,12 +44,12 @@ def XeGPUInsertPrefetchOp : Op<Transform_Dialect, "xegpu.insert_prefetch",
   let arguments = (ins
     TransformHandleTypeInterface:$matmul,
     I64Attr:$tileIndex,
-    DenseI64ArrayAttr:$grid
+    DenseI64ArrayAttr:$tileSize
     );
 
   let results = (outs TransformHandleTypeInterface:$transformed);
 
-  let assemblyFormat = "$matmul $tileIndex $grid attr-dict `:` functional-type(operands, results)";
+  let assemblyFormat = "$matmul $tileIndex $tileSize attr-dict `:` functional-type(operands, results)";
 
   let extraClassDeclaration = [{
     ::mlir::DiagnosedSilenceableFailure applyToOne(

@@ -672,13 +672,14 @@ void mlir::transform::XeGPUHoistDescOp::getEffects(
   modifiesPayload(effects);
 }
 
-::mlir::Value getIthSubtile(::mlir::transform::TransformRewriter &rewriter,
-                            ::mlir::Value &source, ::mlir::Value &index,
-                            ::mlir::Value &upperBound,
-                            llvm::ArrayRef<int64_t> &grid) {
+std::optional<::mlir::Value>
+getIthSubtile(::mlir::transform::TransformRewriter &rewriter,
+              ::mlir::Value &source, ::mlir::Value &index,
+              ::mlir::Value &upperBound, llvm::ArrayRef<int64_t> &tileSize) {
   auto defOp = source.getDefiningOp();
   if (!defOp) {
     LLVM_DEBUG(llvm::dbgs() << "No defining op.\n");
+    return std::nullopt;
   }
   rewriter.setInsertionPointAfter(defOp);
   auto loc = defOp->getLoc();
@@ -686,26 +687,28 @@ void mlir::transform::XeGPUHoistDescOp::getEffects(
   llvm::ArrayRef<int64_t> srcShape =
       ::mlir::cast<::mlir::ShapedType>(source.getType()).getShape();
   if (::mlir::ShapedType::isDynamicShape(srcShape)) {
-    LLVM_DEBUG(llvm::dbgs() << "Memref has dynamic shape.\n");
+    LLVM_DEBUG(llvm::dbgs() << "Expecting memref with static shape.\n");
+    return std::nullopt;
   }
-  if (srcShape[0] % grid[0] != 0 || srcShape[1] % grid[1] != 0) {
-    LLVM_DEBUG(llvm::dbgs() << "Source shape is not divisible by tile grid.\n");
-    return {};
+  if (srcShape[0] % tileSize[0] != 0 || srcShape[1] % tileSize[1] != 0) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "Source shape is not divisible by tile tileSize.\n");
+    return std::nullopt;
   }
+  ::mlir::SmallVector<int64_t, 2> grid{srcShape[0] / tileSize[0],
+                                       srcShape[1] / tileSize[1]};
   auto nGrid = grid[0] * grid[1];
   auto maybeUpperBound = mlir::getConstantIntValue(upperBound);
   if (!maybeUpperBound) {
     LLVM_DEBUG(llvm::dbgs() << "Upper bound is not a constant.\n");
-    return {};
+    return std::nullopt;
   }
   if (*maybeUpperBound != nGrid) {
     LLVM_DEBUG(llvm::dbgs()
-               << "Loop iteration count is not equal to grid size: "
+               << "Loop iteration count is not equal to number of subtiles: "
                << *maybeUpperBound << " != " << nGrid << "\n");
-    return {};
+    return std::nullopt;
   }
-  auto tileRows = srcShape[0] / grid[0];
-  auto tileCols = srcShape[1] / grid[1];
   // linear to 2d tile index
   auto nColTiles =
       rewriter.create<::mlir::arith::ConstantIndexOp>(loc, grid[1]).getResult();
@@ -715,10 +718,10 @@ void mlir::transform::XeGPUHoistDescOp::getEffects(
       rewriter.create<::mlir::arith::RemSIOp>(loc, index, nColTiles);
   // calculate tile offset
   auto tileRowsCst =
-      rewriter.create<::mlir::arith::ConstantIndexOp>(loc, tileRows)
+      rewriter.create<::mlir::arith::ConstantIndexOp>(loc, tileSize[0])
           .getResult();
   auto tileColsCst =
-      rewriter.create<::mlir::arith::ConstantIndexOp>(loc, tileCols)
+      rewriter.create<::mlir::arith::ConstantIndexOp>(loc, tileSize[1])
           .getResult();
   auto row_offset =
       rewriter.create<::mlir::arith::MulIOp>(loc, tileRowsCst, rowIndex);
@@ -728,7 +731,7 @@ void mlir::transform::XeGPUHoistDescOp::getEffects(
   auto offsets = ::mlir::getMixedValues(
       {::mlir::ShapedType::kDynamic, ::mlir::ShapedType::kDynamic},
       {row_offset, col_offset}, rewriter);
-  auto sizes = ::mlir::getMixedValues({tileRows, tileCols}, {}, rewriter);
+  auto sizes = ::mlir::getMixedValues({tileSize[0], tileSize[1]}, {}, rewriter);
   auto strides = ::mlir::getMixedValues({1, 1}, {}, rewriter);
   auto subview = rewriter.create<::mlir::memref::SubViewOp>(
       loc, source, offsets, sizes, strides);
@@ -762,12 +765,17 @@ mlir::transform::XeGPUInsertPrefetchOp::applyToOne(
            << "Invalid tile index: " << tileIndex
            << ", expected 0 or 1 for A or B operand";
   }
-  // grid for the subtiling
-  llvm::ArrayRef<int64_t> tileGrid = getGrid();
-  if (tileGrid.size() != 2) {
-    return mlir::emitSilenceableFailure(getLoc())
-           << "Expected tile grid of size 2";
+  // prefetch tile size
+  llvm::ArrayRef<int64_t> tileSize = getTileSize();
+  if (tileSize.size() != 2) {
+    return mlir::emitSilenceableFailure(getLoc()) << "Expected 2d tile size";
   }
+  // // grid for the subtiling
+  // llvm::ArrayRef<int64_t> tileGrid = getGrid();
+  // if (tileGrid.size() != 2) {
+  //   return mlir::emitSilenceableFailure(getLoc())
+  //          << "Expected tile grid of size 2";
+  // }
   // clone k loop with only A tile subview op
   rewriter.setInsertionPoint(loopOp);
   auto cloned = rewriter.clone(*loopOp.getOperation());
@@ -809,9 +817,14 @@ mlir::transform::XeGPUInsertPrefetchOp::applyToOne(
   }
   // A tile is reused by all threads defined by the 2nd induction variable
   int64_t indVarIndex = tileIndex == 0 ? 1 : 0;
-  auto prefetchTile =
+  auto maybePrefetchTile =
       getIthSubtile(rewriter, aTile, subGroupIndVars[indVarIndex],
-                    subGroupUpperBound[indVarIndex], tileGrid);
+                    subGroupUpperBound[indVarIndex], tileSize);
+  if (!maybePrefetchTile) {
+    return mlir::emitSilenceableFailure(getLoc())
+           << "Failed to generate prefetch subtile";
+  }
+  auto prefetchTile = *maybePrefetchTile;
 
   // add xegpu desc op for the tile
   auto aTileType = ::mlir::cast<::mlir::ShapedType>(prefetchTile.getType());
