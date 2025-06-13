@@ -256,6 +256,30 @@ insertOffsetUpdateOp(::mlir::transform::TransformRewriter &rewriter,
   return newDescOp;
 }
 
+::mlir::LogicalResult
+insertOffsetUpdateOps(::mlir::transform::TransformRewriter &rewriter,
+                      ::mlir::scf::ForOp loopOp) {
+  // Find all create desc operations in the loop body
+  ::mlir::SmallVector<::mlir::Operation *> createDescOps;
+  for (auto &op : loopOp.getBody()->getOperations()) {
+    if (::mlir::isa<::mlir::xegpu::CreateNdDescOp>(op)) {
+      createDescOps.push_back(&op);
+    }
+  }
+  if (createDescOps.empty()) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "No xegpu.create_nd_desc ops found in the loop body");
+    return ::mlir::failure();
+  }
+  // canonicalize
+  for (auto &op : createDescOps) {
+    auto descOp = ::mlir::cast<::mlir::xegpu::CreateNdDescOp>(op);
+    descOp = foldSubviewIntoDescOp(rewriter, descOp);
+    insertOffsetUpdateOp(rewriter, loopOp, descOp);
+  }
+  return ::mlir::success();
+}
+
 // Hoist create desc ops out of the loop.
 // If offset update ops exist, add values to loop iter_args and yield
 ::mlir::FailureOr<::mlir::scf::ForOp>
@@ -617,26 +641,9 @@ mlir::transform::XeGPUHoistDescOp::applyToOne(
            << "Expected a scf.for op, but got: " << target->getName();
   }
 
-  // Find all create desc operations in the loop body
-  SmallVector<Operation *> createDescOps;
-  for (auto &op : loopOp.getBody()->getOperations()) {
-    if (isa<::mlir::xegpu::CreateNdDescOp>(op)) {
-      createDescOps.push_back(&op);
-    }
-  }
-  LLVM_DEBUG(llvm::dbgs() << "Found create desc ops in the loop body: "
-                          << createDescOps.size() << "\n");
-  if (createDescOps.empty()) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
-                << "No xegpu.create_nd_desc ops found in the loop body";
-    diag.attachNote(loopOp.getLoc()) << "loop op";
-    return diag;
-  }
-
-  for (auto &op : createDescOps) {
-    auto descOp = ::mlir::cast<::mlir::xegpu::CreateNdDescOp>(op);
-    descOp = foldSubviewIntoDescOp(rewriter, descOp);
-    insertOffsetUpdateOp(rewriter, loopOp, descOp);
+  if (mlir::failed(insertOffsetUpdateOps(rewriter, loopOp))) {
+    return mlir::emitSilenceableFailure(getLoc())
+           << "No desc ops found in the loop body " << target->getName();
   }
   auto newLoopOp = hoistDescOps(rewriter, loopOp);
   if (::mlir::failed(newLoopOp)) {
