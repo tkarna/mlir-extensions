@@ -7,11 +7,36 @@ include "mlir/Dialect/Transform/IR/TransformTypes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
-def XeGPUHoistDescOp : Op<Transform_Dialect, "xegpu.xegpu_hoist_desc",
+def XeGPUHoistDescOp : Op<Transform_Dialect, "xegpu.hoist_desc_ops",
     [TransformOpInterface, TransformEachOpTrait,
      DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
 
   let summary = "Hoists xegpu tile descriptor ops outside the containing loop";
+  let description = [{
+    FIXME
+  }];
+
+  let arguments = (ins
+    TransformHandleTypeInterface:$loop);
+
+  let results = (outs TransformHandleTypeInterface:$transformed);
+
+  let assemblyFormat = "$loop attr-dict `:` functional-type(operands, results)";
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure applyToOne(
+        ::mlir::transform::TransformRewriter &rewriter,
+        ::mlir::Operation* target,
+        ::mlir::transform::ApplyToEachResultList &results,
+        ::mlir::transform::TransformState &state);
+  }];
+}
+
+def XeGPUHoistLoadStoreOp : Op<Transform_Dialect, "xegpu.hoist_load_store_ops",
+    [TransformOpInterface, TransformEachOpTrait,
+     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+
+  let summary = "Hoists xegpu load/store pattern outside the containing loop";
   let description = [{
     FIXME
   }];

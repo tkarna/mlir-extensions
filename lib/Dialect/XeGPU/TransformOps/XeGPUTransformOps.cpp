@@ -645,8 +645,33 @@ mlir::transform::XeGPUHoistDescOp::applyToOne(
     diag.attachNote(loopOp.getLoc()) << "loop op";
     return diag;
   }
-  castDpasAccumulatorType(rewriter, *newLoopOp);
-  newLoopOp = hoistLoadStoreOps(rewriter, *newLoopOp);
+  loopOp = *newLoopOp;
+  foldRedundantLoadOps(rewriter, *newLoopOp);
+  results.push_back(loopOp.getOperation());
+  return DiagnosedSilenceableFailure::success();
+}
+
+void mlir::transform::XeGPUHoistDescOp::getEffects(
+    ::llvm::SmallVectorImpl<::mlir::MemoryEffects::EffectInstance> &effects) {
+  consumesHandle(getLoopMutable(), effects);
+  producesHandle(getOperation()->getOpResults(), effects);
+  modifiesPayload(effects);
+}
+
+::mlir::DiagnosedSilenceableFailure
+mlir::transform::XeGPUHoistLoadStoreOp::applyToOne(
+    ::mlir::transform::TransformRewriter &rewriter, ::mlir::Operation *target,
+    ::mlir::transform::ApplyToEachResultList &results,
+    ::mlir::transform::TransformState &state) {
+
+  auto loopOp = ::mlir::dyn_cast<::mlir::scf::ForOp>(target);
+  if (!loopOp) {
+    return mlir::emitSilenceableFailure(getLoc())
+           << "Expected a scf.for op, but got: " << target->getName();
+  }
+
+  castDpasAccumulatorType(rewriter, loopOp);
+  auto newLoopOp = hoistLoadStoreOps(rewriter, loopOp);
   if (::mlir::failed(newLoopOp)) {
     auto diag = mlir::emitSilenceableFailure(getLoc())
                 << "Failed to hoist load/store ops";
@@ -665,7 +690,7 @@ mlir::transform::XeGPUHoistDescOp::applyToOne(
   return DiagnosedSilenceableFailure::success();
 }
 
-void mlir::transform::XeGPUHoistDescOp::getEffects(
+void mlir::transform::XeGPUHoistLoadStoreOp::getEffects(
     ::llvm::SmallVectorImpl<::mlir::MemoryEffects::EffectInstance> &effects) {
   consumesHandle(getLoopMutable(), effects);
   producesHandle(getOperation()->getOpResults(), effects);
