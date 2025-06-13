@@ -175,9 +175,9 @@ static std::optional<T> findUserInRegion(Value value, Region &region) {
 }
 
 // Add offset update op after create desc op if tile is updated in the loop.
-xegpu::CreateNdDescOp
-insertOffsetUpdateOp(transform::TransformRewriter &rewriter,
-                     scf::ForOp parentLoopOp, xegpu::CreateNdDescOp descOp) {
+xegpu::CreateNdDescOp insertUpdateOp(transform::TransformRewriter &rewriter,
+                                     scf::ForOp parentLoopOp,
+                                     xegpu::CreateNdDescOp descOp) {
 
   // Clone producers and replace loop induction variable with lower bound
   rewriter.setInsertionPointAfter(descOp);
@@ -266,7 +266,7 @@ LogicalResult insertOffsetUpdateOps(transform::TransformRewriter &rewriter,
   for (auto &op : createDescOps) {
     auto descOp = cast<xegpu::CreateNdDescOp>(op);
     descOp = foldSubviewIntoDescOp(rewriter, descOp);
-    insertOffsetUpdateOp(rewriter, loopOp, descOp);
+    insertUpdateOp(rewriter, loopOp, descOp);
   }
   return success();
 }
@@ -771,12 +771,6 @@ DiagnosedSilenceableFailure transform::XeGPUInsertPrefetchOp::applyToOne(
   if (tileSize.size() != 2) {
     return emitSilenceableFailure(getLoc()) << "Expected 2d tile size";
   }
-  // // grid for the subtiling
-  // llvm::ArrayRef<int64_t> tileGrid = getGrid();
-  // if (tileGrid.size() != 2) {
-  //   return emitSilenceableFailure(getLoc())
-  //          << "Expected tile grid of size 2";
-  // }
   // clone k loop with only A tile subview op
   rewriter.setInsertionPoint(loopOp);
   auto cloned = rewriter.clone(*loopOp.getOperation());
@@ -860,27 +854,9 @@ DiagnosedSilenceableFailure transform::XeGPUInsertPrefetchOp::applyToOne(
   for (auto &op : toRemoveOps) {
     rewriter.eraseOp(op);
   }
-
-  // ------------------
-  // this bit is duplicated
-  // Find all create desc operations in the loop body
-  SmallVector<Operation *> createDescOps;
-  for (auto &op : newLoopOp.getBody()->getOperations()) {
-    if (isa<xegpu::CreateNdDescOp>(op)) {
-      createDescOps.push_back(&op);
-    }
-  }
-  if (createDescOps.empty()) {
-    auto diag = emitSilenceableFailure(getLoc())
-                << "No xegpu.create_nd_desc ops found in the loop body";
-    diag.attachNote(newLoopOp.getLoc()) << "loop op";
-    return diag;
-  }
-
-  for (auto &op : createDescOps) {
-    auto descOp = cast<xegpu::CreateNdDescOp>(op);
-    descOp = foldSubviewIntoDescOp(rewriter, descOp);
-    insertOffsetUpdateOp(rewriter, newLoopOp, descOp);
+  if (failed(insertOffsetUpdateOps(rewriter, newLoopOp))) {
+    return emitSilenceableFailure(getLoc())
+           << "No desc ops found in the loop body " << target->getName();
   }
   auto maybeNewLoopOp = hoistDescOps(rewriter, newLoopOp);
   if (failed(maybeNewLoopOp)) {
@@ -890,7 +866,6 @@ DiagnosedSilenceableFailure transform::XeGPUInsertPrefetchOp::applyToOne(
     return diag;
   }
   newLoopOp = *maybeNewLoopOp;
-  // ------------------
 
   // peel first iteration of the loop
   scf::ForOp firstLoopOp;
