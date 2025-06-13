@@ -25,8 +25,10 @@
 #include "llvm/Support/Debug.h"
 #define DEBUG_TYPE "xegpu-hoist-desc"
 
+using namespace mlir;
+
 class XeGPUTransformOps
-    : public ::mlir::transform::TransformDialectExtension<XeGPUTransformOps> {
+    : public transform::TransformDialectExtension<XeGPUTransformOps> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(XeGPUTransformOps)
 
@@ -36,10 +38,10 @@ public:
 };
 
 void XeGPUTransformOps::init() {
-  declareGeneratedDialect<::mlir::scf::SCFDialect>();
-  declareGeneratedDialect<::mlir::arith::ArithDialect>();
-  declareGeneratedDialect<::mlir::gpu::GPUDialect>();
-  declareGeneratedDialect<::mlir::xegpu::XeGPUDialect>();
+  declareGeneratedDialect<scf::SCFDialect>();
+  declareGeneratedDialect<arith::ArithDialect>();
+  declareGeneratedDialect<gpu::GPUDialect>();
+  declareGeneratedDialect<xegpu::XeGPUDialect>();
 
   registerTransformOps<
 #define GET_OP_LIST
@@ -51,24 +53,21 @@ void XeGPUTransformOps::init() {
 #include <imex/Dialect/XeGPU/TransformOps/XeGPUTransformOps.cpp.inc>
 
 // Return vector type with specified VNNI shape.
-static ::mlir::VectorType getVnniVector(::mlir::ArrayRef<int64_t> shape,
-                                        ::mlir::Type elementType,
-                                        int64_t vnniFactor = 2,
-                                        int64_t vnniAxis = 0) {
+static VectorType getVnniVector(ArrayRef<int64_t> shape, Type elementType,
+                                int64_t vnniFactor = 2, int64_t vnniAxis = 0) {
   assert(shape.size() == 2 && "Expected plain 2D shape");
-  ::mlir::SmallVector<int64_t> vecShape{shape};
+  SmallVector<int64_t> vecShape{shape};
   vecShape[vnniAxis] /= vnniFactor;
   vecShape.push_back(vnniFactor);
-  return ::mlir::VectorType::get(vecShape, elementType);
+  return VectorType::get(vecShape, elementType);
 }
 
 // Folds defining memref.SubviewOp into the xegpu.CreateNDDescOp
 // Only considers subview ops in the same region.
-std::optional<::mlir::xegpu::CreateNdDescOp>
-foldSubview(::mlir::transform::TransformRewriter &rewriter,
-            ::mlir::xegpu::CreateNdDescOp descOp) {
-  auto subViewOp =
-      descOp.getSource().getDefiningOp<::mlir::memref::SubViewOp>();
+std::optional<xegpu::CreateNdDescOp>
+foldSubview(transform::TransformRewriter &rewriter,
+            xegpu::CreateNdDescOp descOp) {
+  auto subViewOp = descOp.getSource().getDefiningOp<memref::SubViewOp>();
   if (!subViewOp) {
     LLVM_DEBUG(llvm::dbgs() << "No defining subview op.\n");
     return std::nullopt;
@@ -86,22 +85,22 @@ foldSubview(::mlir::transform::TransformRewriter &rewriter,
 
   rewriter.setInsertionPointAfter(descOp);
 
-  ::mlir::SmallVector<::mlir::Value> resolvedOffsets;
-  ::mlir::affine::resolveIndicesIntoOpWithOffsetsAndStrides(
+  SmallVector<Value> resolvedOffsets;
+  affine::resolveIndicesIntoOpWithOffsetsAndStrides(
       rewriter, descOp.getLoc(), subViewOp.getMixedOffsets(),
       subViewOp.getMixedStrides(), subViewOp.getDroppedDims(),
       descOp.getMixedOffsets(), resolvedOffsets);
 
-  auto newOp = rewriter.replaceOpWithNewOp<::mlir::xegpu::CreateNdDescOp>(
+  auto newOp = rewriter.replaceOpWithNewOp<xegpu::CreateNdDescOp>(
       descOp, descOp.getTensorDesc().getType(), subViewOp.getSource(),
       getAsOpFoldResult(resolvedOffsets));
 
-  return mlir::cast<::mlir::xegpu::CreateNdDescOp>(newOp);
+  return cast<xegpu::CreateNdDescOp>(newOp);
 }
 
-::mlir::xegpu::CreateNdDescOp
-foldSubviewIntoDescOp(::mlir::transform::TransformRewriter &rewriter,
-                      ::mlir::xegpu::CreateNdDescOp descOp) {
+xegpu::CreateNdDescOp
+foldSubviewIntoDescOp(transform::TransformRewriter &rewriter,
+                      xegpu::CreateNdDescOp descOp) {
   auto newOp = descOp;
   while (true) {
     auto maybeNewOp = foldSubview(rewriter, newOp);
@@ -113,8 +112,8 @@ foldSubviewIntoDescOp(::mlir::transform::TransformRewriter &rewriter,
 }
 
 // Recurse operands and collect all producer ops in the given region.
-void collectProducerOps(::mlir::Operation *op, ::mlir::Region &inRegion,
-                        ::mlir::SmallVector<::mlir::Operation *> &ops) {
+void collectProducerOps(Operation *op, Region &inRegion,
+                        SmallVector<Operation *> &ops) {
   for (auto val : op->getOperands()) {
     if (const auto definingOp = val.getDefiningOp();
         definingOp && definingOp->getParentRegion() == &inRegion) {
@@ -125,10 +124,9 @@ void collectProducerOps(::mlir::Operation *op, ::mlir::Region &inRegion,
 }
 
 // Returns all producer ops in the given region
-::mlir::SmallVector<::mlir::Operation *>
-getProducerOpsInRegion(::mlir::Operation *op, ::mlir::Region &inRegion,
-                       bool includeOp = true) {
-  ::mlir::SmallVector<::mlir::Operation *> producerOps;
+SmallVector<Operation *> getProducerOpsInRegion(Operation *op, Region &inRegion,
+                                                bool includeOp = true) {
+  SmallVector<Operation *> producerOps;
   if (includeOp) {
     producerOps.push_back(op);
   }
@@ -137,22 +135,19 @@ getProducerOpsInRegion(::mlir::Operation *op, ::mlir::Region &inRegion,
 }
 
 // Get user of type T in immediate users of the value.
-template <typename T>
-static std::optional<T> getUserOfType(::mlir::Value value) {
+template <typename T> static std::optional<T> getUserOfType(Value value) {
   auto users = value.getUsers();
-  auto it = llvm::find_if(
-      users, [&](::mlir::Operation *op) { return ::mlir::isa<T>(op); });
+  auto it = llvm::find_if(users, [&](Operation *op) { return isa<T>(op); });
   if (it != users.end()) {
-    return ::mlir::cast<T>(*it);
+    return cast<T>(*it);
   }
   return std::nullopt;
 }
 
 // Get defining op ot the given type
-template <typename T>
-static std::optional<T> getDefiningOpOfType(::mlir::Value value) {
+template <typename T> static std::optional<T> getDefiningOpOfType(Value value) {
   if (auto op = value.getDefiningOp()) {
-    if (auto castedOp = ::mlir::dyn_cast<T>(op)) {
+    if (auto castedOp = dyn_cast<T>(op)) {
       return castedOp;
     }
   }
@@ -161,13 +156,12 @@ static std::optional<T> getDefiningOpOfType(::mlir::Value value) {
 
 // Follow user chain in region and find the first user of type T.
 template <typename T>
-static std::optional<T> findUserInRegion(::mlir::Value value,
-                                         ::mlir::Region &region) {
+static std::optional<T> findUserInRegion(Value value, Region &region) {
   for (auto user : value.getUsers()) {
     if (user->getParentRegion() != &region) {
       continue; // skip users outside the region
     }
-    if (auto op = ::mlir::dyn_cast<T>(user)) {
+    if (auto op = dyn_cast<T>(user)) {
       return op;
     } else {
       for (auto val : user->getResults()) {
@@ -181,16 +175,15 @@ static std::optional<T> findUserInRegion(::mlir::Value value,
 }
 
 // Add offset update op after create desc op if tile is updated in the loop.
-::mlir::xegpu::CreateNdDescOp
-insertOffsetUpdateOp(::mlir::transform::TransformRewriter &rewriter,
-                     ::mlir::scf::ForOp parentLoopOp,
-                     ::mlir::xegpu::CreateNdDescOp descOp) {
+xegpu::CreateNdDescOp
+insertOffsetUpdateOp(transform::TransformRewriter &rewriter,
+                     scf::ForOp parentLoopOp, xegpu::CreateNdDescOp descOp) {
 
   // Clone producers and replace loop induction variable with lower bound
   rewriter.setInsertionPointAfter(descOp);
   auto loc = descOp.getLoc();
-  ::mlir::IRMapping mapping;
-  ::mlir::SmallVector<::mlir::Operation *> clonedOps;
+  IRMapping mapping;
+  SmallVector<Operation *> clonedOps;
   auto producers = getProducerOpsInRegion(descOp.getOperation(),
                                           parentLoopOp.getRegion(), true);
   for (auto &op : llvm::reverse(producers)) {
@@ -200,34 +193,33 @@ insertOffsetUpdateOp(::mlir::transform::TransformRewriter &rewriter,
     clonedOps.push_back(newOp);
   }
   // Descriptor op offset should be a constant defined by loop lower bound
-  rewriter.replaceUsesWithIf(
-      parentLoopOp.getInductionVar(), parentLoopOp.getLowerBound(),
-      [&](::mlir::OpOperand &use) {
-        return ::llvm::is_contained(clonedOps, use.getOwner());
-      });
-  auto newDescOp =
-      ::mlir::cast<::mlir::xegpu::CreateNdDescOp>(clonedOps.back());
+  rewriter.replaceUsesWithIf(parentLoopOp.getInductionVar(),
+                             parentLoopOp.getLowerBound(), [&](OpOperand &use) {
+                               return ::llvm::is_contained(clonedOps,
+                                                           use.getOwner());
+                             });
+  auto newDescOp = cast<xegpu::CreateNdDescOp>(clonedOps.back());
 
   // Compute offset for update operation: original offset - constant offset
-  llvm::SmallVector<::mlir::Value> origDynamicOffsets, constDynamicOffsets,
+  llvm::SmallVector<Value> origDynamicOffsets, constDynamicOffsets,
       dynamicOffsets;
   llvm::SmallVector<int64_t> origStaticOffsets, constStaticOffsets,
       staticOffsets;
-  ::mlir::dispatchIndexOpFoldResults(descOp.getMixedOffsets(),
-                                     origDynamicOffsets, origStaticOffsets);
-  ::mlir::dispatchIndexOpFoldResults(newDescOp.getMixedOffsets(),
-                                     constDynamicOffsets, constStaticOffsets);
+  dispatchIndexOpFoldResults(descOp.getMixedOffsets(), origDynamicOffsets,
+                             origStaticOffsets);
+  dispatchIndexOpFoldResults(newDescOp.getMixedOffsets(), constDynamicOffsets,
+                             constStaticOffsets);
   // Deduce correct offsets for update offset op
   int64_t dynIndex = 0;
   for (auto [i, origStaticOffset] : llvm::enumerate(origStaticOffsets)) {
-    if (origStaticOffset == ::mlir::ShapedType::kDynamic) {
+    if (origStaticOffset == ShapedType::kDynamic) {
       auto origDynOffset = origDynamicOffsets[dynIndex];
       auto cstDynOffset = constDynamicOffsets[dynIndex];
       if (true) { // FIXME check if this operand depends on loop variable
-        auto subOp = rewriter.create<::mlir::arith::SubIOp>(
+        auto subOp = rewriter.create<arith::SubIOp>(
             loc, origDynOffset.getType(), origDynOffset, cstDynOffset);
         dynamicOffsets.push_back(subOp.getResult());
-        staticOffsets.push_back(::mlir::ShapedType::kDynamic);
+        staticOffsets.push_back(ShapedType::kDynamic);
       } else {
         LLVM_DEBUG(llvm::dbgs()
                    << "Dynamic offset does not depend on induction var, "
@@ -244,11 +236,11 @@ insertOffsetUpdateOp(::mlir::transform::TransformRewriter &rewriter,
   // add an offset update op after the create desc op
   if (!dynamicOffsets.empty()) {
     auto tile = newDescOp.getResult();
-    auto offsetOp = rewriter.create<::mlir::xegpu::UpdateNdOffsetOp>(
+    auto offsetOp = rewriter.create<xegpu::UpdateNdOffsetOp>(
         loc, tile.getType(), tile, dynamicOffsets, staticOffsets);
     // replace subsequent uses of the descriptor with the offset descriptor
     rewriter.replaceUsesWithIf(
-        descOp.getResult(), offsetOp.getResult(), [&](::mlir::OpOperand &use) {
+        descOp.getResult(), offsetOp.getResult(), [&](OpOperand &use) {
           return use.getOwner() != offsetOp.getOperation();
         });
   }
@@ -256,38 +248,36 @@ insertOffsetUpdateOp(::mlir::transform::TransformRewriter &rewriter,
   return newDescOp;
 }
 
-::mlir::LogicalResult
-insertOffsetUpdateOps(::mlir::transform::TransformRewriter &rewriter,
-                      ::mlir::scf::ForOp loopOp) {
+LogicalResult insertOffsetUpdateOps(transform::TransformRewriter &rewriter,
+                                    scf::ForOp loopOp) {
   // Find all create desc operations in the loop body
-  ::mlir::SmallVector<::mlir::Operation *> createDescOps;
+  SmallVector<Operation *> createDescOps;
   for (auto &op : loopOp.getBody()->getOperations()) {
-    if (::mlir::isa<::mlir::xegpu::CreateNdDescOp>(op)) {
+    if (isa<xegpu::CreateNdDescOp>(op)) {
       createDescOps.push_back(&op);
     }
   }
   if (createDescOps.empty()) {
     LLVM_DEBUG(llvm::dbgs()
                << "No xegpu.create_nd_desc ops found in the loop body");
-    return ::mlir::failure();
+    return failure();
   }
   // canonicalize
   for (auto &op : createDescOps) {
-    auto descOp = ::mlir::cast<::mlir::xegpu::CreateNdDescOp>(op);
+    auto descOp = cast<xegpu::CreateNdDescOp>(op);
     descOp = foldSubviewIntoDescOp(rewriter, descOp);
     insertOffsetUpdateOp(rewriter, loopOp, descOp);
   }
-  return ::mlir::success();
+  return success();
 }
 
 // Hoist create desc ops out of the loop.
 // If offset update ops exist, add values to loop iter_args and yield
-::mlir::FailureOr<::mlir::scf::ForOp>
-hoistDescOps(::mlir::transform::TransformRewriter &rewriter,
-             ::mlir::scf::ForOp loopOp) {
-  ::mlir::SmallVector<::mlir::xegpu::CreateNdDescOp> descOps;
+FailureOr<scf::ForOp> hoistDescOps(transform::TransformRewriter &rewriter,
+                                   scf::ForOp loopOp) {
+  SmallVector<xegpu::CreateNdDescOp> descOps;
   for (auto &op : loopOp.getBody()->getOperations()) {
-    if (auto descOp = ::mlir::dyn_cast<::mlir::xegpu::CreateNdDescOp>(op)) {
+    if (auto descOp = dyn_cast<xegpu::CreateNdDescOp>(op)) {
       // Assume that desc ops can be hoisted
       descOps.push_back(descOp);
     }
@@ -297,7 +287,7 @@ hoistDescOps(::mlir::transform::TransformRewriter &rewriter,
     return loopOp;
   }
 
-  ::mlir::SmallVector<::mlir::Value> initValues, yieldValues;
+  SmallVector<Value> initValues, yieldValues;
   for (auto &descOp : descOps) {
     // hoist desc op
     LLVM_DEBUG(llvm::dbgs() << "Hoisting desc op: " << descOp.getLoc() << "\n");
@@ -309,7 +299,7 @@ hoistDescOps(::mlir::transform::TransformRewriter &rewriter,
 
     // Find the correct loop init and yield values
     auto maybeOffsetOp =
-        getUserOfType<::mlir::xegpu::UpdateNdOffsetOp>(descOp.getResult());
+        getUserOfType<xegpu::UpdateNdOffsetOp>(descOp.getResult());
     if (!maybeOffsetOp) {
       // skip if no offset update op
       continue;
@@ -319,30 +309,28 @@ hoistDescOps(::mlir::transform::TransformRewriter &rewriter,
     auto offsetOp = *maybeOffsetOp;
     auto offsetProducerOps =
         getProducerOpsInRegion(offsetOp.getOperation(), loopOp.getRegion());
-    rewriter.replaceUsesWithIf(loopOp.getInductionVar(), loopOp.getStep(),
-                               [&](::mlir::OpOperand &use) {
-                                 return llvm::is_contained(offsetProducerOps,
-                                                           use.getOwner());
-                               });
+    rewriter.replaceUsesWithIf(
+        loopOp.getInductionVar(), loopOp.getStep(), [&](OpOperand &use) {
+          return llvm::is_contained(offsetProducerOps, use.getOwner());
+        });
     // offset now points to next tile, desc users must use current tile
     rewriter.replaceAllUsesWith(offsetOp.getResult(), offsetOp.getTensorDesc());
     initValues.push_back(descOp.getResult());
     yieldValues.push_back(offsetOp.getResult());
   }
   // rewrite loop with new init/yield values
-  ::mlir::NewYieldValuesFn yieldFn =
-      [&](::mlir::OpBuilder &b, ::mlir::Location loc,
-          llvm::ArrayRef<::mlir::BlockArgument> newBBArgs) {
-        return yieldValues;
-      };
+  NewYieldValuesFn yieldFn = [&](OpBuilder &b, Location loc,
+                                 llvm::ArrayRef<BlockArgument> newBBArgs) {
+    return yieldValues;
+  };
   auto maybeNewLoop = loopOp.replaceWithAdditionalYields(
       rewriter, initValues,
       /*replaceInitOperandUsesInLoop=*/true, yieldFn);
-  if (::mlir::failed(maybeNewLoop)) {
+  if (failed(maybeNewLoop)) {
     LLVM_DEBUG(llvm::dbgs() << "Creating new loop failed\n");
-    return ::mlir::failure();
+    return failure();
   }
-  return ::mlir::cast<::mlir::scf::ForOp>(*maybeNewLoop);
+  return cast<scf::ForOp>(*maybeNewLoop);
 }
 
 // Hoist loop independent load/store ops out of the loop.
@@ -351,18 +339,17 @@ hoistDescOps(::mlir::transform::TransformRewriter &rewriter,
 // moves the load/store ops before/after the loop. If there are multiple such
 // patterns acting on the same tile, chains the update ops correctly inside the
 // loop.
-::mlir::FailureOr<mlir::scf::ForOp>
-hoistLoadStoreOps(::mlir::transform::TransformRewriter &rewriter,
-                  ::mlir::scf::ForOp loopOp) {
-  ::mlir::SmallVector<::mlir::Operation *> opsToRemove;
-  ::mlir::SmallVector<::mlir::Operation *> opsToHoist;
-  llvm::DenseMap<::mlir::Value, int64_t> tileToYieldIndexMap;
-  llvm::DenseMap<::mlir::Value, ::mlir::Value> tileToInitValueMap;
-  llvm::DenseMap<::mlir::Value, ::mlir::Value> tileToYieldValueMap;
+FailureOr<scf::ForOp> hoistLoadStoreOps(transform::TransformRewriter &rewriter,
+                                        scf::ForOp loopOp) {
+  SmallVector<Operation *> opsToRemove;
+  SmallVector<Operation *> opsToHoist;
+  llvm::DenseMap<Value, int64_t> tileToYieldIndexMap;
+  llvm::DenseMap<Value, Value> tileToInitValueMap;
+  llvm::DenseMap<Value, Value> tileToYieldValueMap;
   int64_t nbYields = loopOp.getNumResults();
   for (auto &op : loopOp.getBody()->getOperations()) {
     // find loop-invariant load and store ops
-    auto loadOp = ::mlir::dyn_cast<::mlir::xegpu::LoadNdOp>(op);
+    auto loadOp = dyn_cast<xegpu::LoadNdOp>(op);
     if (!loadOp) {
       continue;
     }
@@ -374,8 +361,8 @@ hoistLoadStoreOps(::mlir::transform::TransformRewriter &rewriter,
       continue;
     }
     LLVM_DEBUG(llvm::dbgs() << "Found load op: " << loadOp.getLoc() << "\n");
-    auto maybeStoreOp = findUserInRegion<::mlir::xegpu::StoreNdOp>(
-        loadOp.getResult(), loopOp.getRegion());
+    auto maybeStoreOp = findUserInRegion<xegpu::StoreNdOp>(loadOp.getResult(),
+                                                           loopOp.getRegion());
     if (!maybeStoreOp) {
       LLVM_DEBUG(llvm::dbgs() << "No store op found for load op, skipping.\n");
       continue;
@@ -388,13 +375,12 @@ hoistLoadStoreOps(::mlir::transform::TransformRewriter &rewriter,
     }
     LLVM_DEBUG(llvm::dbgs() << "Found store op: " << storeOp.getLoc() << "\n");
     // define loop init and yield values
-    ::mlir::Value loadedVect = loadOp.getResult();
-    ::mlir::Value yieldValue = storeOp.getValue();
+    Value loadedVect = loadOp.getResult();
+    Value yieldValue = storeOp.getValue();
     if (!tileToYieldIndexMap.contains(tile)) {
       // case 1: tile has not been seen yet
       // hoist load/cast op and its producers
-      auto maybeCastOp =
-          getUserOfType<::mlir::arith::ExtFOp>(loadOp.getValue());
+      auto maybeCastOp = getUserOfType<arith::ExtFOp>(loadOp.getValue());
       if (maybeCastOp) {
         // if the load op is a cast, hoist the cast as well
         opsToHoist.push_back((*maybeCastOp).getOperation());
@@ -408,7 +394,7 @@ hoistLoadStoreOps(::mlir::transform::TransformRewriter &rewriter,
     } else {
       // case 2: tile has been seen before
       // update the producer-consumer chain
-      auto maybeCastOp = getUserOfType<::mlir::arith::ExtFOp>(loadedVect);
+      auto maybeCastOp = getUserOfType<arith::ExtFOp>(loadedVect);
       if (maybeCastOp) {
         loadedVect = (*maybeCastOp).getResult();
         opsToRemove.push_back(maybeCastOp->getOperation());
@@ -420,7 +406,7 @@ hoistLoadStoreOps(::mlir::transform::TransformRewriter &rewriter,
     // mark store op and its cast as ops to remove
     opsToRemove.push_back(storeOp.getOperation());
     auto maybeReCastOp =
-        getDefiningOpOfType<::mlir::arith::TruncFOp>(storeOp.getValue());
+        getDefiningOpOfType<arith::TruncFOp>(storeOp.getValue());
     if (maybeReCastOp) {
       yieldValue = (*maybeReCastOp).getOperand();
       opsToRemove.push_back(maybeReCastOp->getOperation());
@@ -443,47 +429,44 @@ hoistLoadStoreOps(::mlir::transform::TransformRewriter &rewriter,
   }
 
   // rewrite loop with new init/yield values
-  ::mlir::SmallVector<::mlir::Value> initValues, yieldValues;
+  SmallVector<Value> initValues, yieldValues;
   for (auto &[tile, initValue] : tileToInitValueMap) {
     auto yieldValue = tileToYieldValueMap[tile]; // TODO check if exists
     initValues.push_back(initValue);
     yieldValues.push_back(yieldValue);
   }
-  ::mlir::NewYieldValuesFn yieldFn =
-      [&](::mlir::OpBuilder &b, ::mlir::Location loc,
-          llvm::ArrayRef<::mlir::BlockArgument> newBBArgs) {
-        return yieldValues;
-      };
+  NewYieldValuesFn yieldFn = [&](OpBuilder &b, Location loc,
+                                 llvm::ArrayRef<BlockArgument> newBBArgs) {
+    return yieldValues;
+  };
   auto maybeNewLoop = loopOp.replaceWithAdditionalYields(
       rewriter, initValues,
       /*replaceInitOperandUsesInLoop=*/true, yieldFn);
-  if (::mlir::failed(maybeNewLoop)) {
+  if (failed(maybeNewLoop)) {
     LLVM_DEBUG(llvm::dbgs() << "Creating new loop failed\n");
-    return ::mlir::failure();
+    return failure();
   }
-  auto newLoopOp = ::mlir::cast<::mlir::scf::ForOp>(*maybeNewLoop);
+  auto newLoopOp = cast<scf::ForOp>(*maybeNewLoop);
 
   // create store ops after the loop
   rewriter.setInsertionPointAfter(newLoopOp);
   auto ctx = rewriter.getContext();
-  auto writeCacheHint = ::mlir::xegpu::CachePolicyAttr::get(
-      ctx, ::mlir::xegpu::CachePolicy::WRITE_BACK);
+  auto writeCacheHint =
+      xegpu::CachePolicyAttr::get(ctx, xegpu::CachePolicy::WRITE_BACK);
   for (auto &[tile, yieldIndex] : tileToYieldIndexMap) {
-    auto tileElemType =
-        ::mlir::cast<::mlir::ShapedType>(tile.getType()).getElementType();
-    ::mlir::Value storeValue = newLoopOp.getResult(yieldIndex);
-    if (::mlir::cast<::mlir::ShapedType>(storeValue.getType())
-            .getElementType() != tileElemType) {
-      auto dstType = ::mlir::VectorType::get(
-          ::mlir::cast<::mlir::ShapedType>(storeValue.getType()).getShape(),
-          tileElemType);
-      auto reCastOp = rewriter.create<::mlir::arith::TruncFOp>(
-          newLoopOp.getLoc(), dstType, storeValue);
+    auto tileElemType = cast<ShapedType>(tile.getType()).getElementType();
+    Value storeValue = newLoopOp.getResult(yieldIndex);
+    if (cast<ShapedType>(storeValue.getType()).getElementType() !=
+        tileElemType) {
+      auto dstType = VectorType::get(
+          cast<ShapedType>(storeValue.getType()).getShape(), tileElemType);
+      auto reCastOp = rewriter.create<arith::TruncFOp>(newLoopOp.getLoc(),
+                                                       dstType, storeValue);
       storeValue = reCastOp.getResult();
     }
-    rewriter.create<::mlir::xegpu::StoreNdOp>(newLoopOp.getLoc(), storeValue,
-                                              tile, writeCacheHint,
-                                              writeCacheHint, writeCacheHint);
+    rewriter.create<xegpu::StoreNdOp>(newLoopOp.getLoc(), storeValue, tile,
+                                      writeCacheHint, writeCacheHint,
+                                      writeCacheHint);
   }
   // remove deprecated ops
   for (auto &op : opsToRemove) {
@@ -492,18 +475,17 @@ hoistLoadStoreOps(::mlir::transform::TransformRewriter &rewriter,
   return newLoopOp;
 }
 
-void foldRedundantLoadOps(::mlir::transform::TransformRewriter &rewriter,
-                          ::mlir::scf::ForOp loopOp) {
-  llvm::DenseMap<::mlir::Value, ::mlir::SmallVector<::mlir::Operation *>>
-      tileToLoadOps;
+void foldRedundantLoadOps(transform::TransformRewriter &rewriter,
+                          scf::ForOp loopOp) {
+  llvm::DenseMap<Value, SmallVector<Operation *>> tileToLoadOps;
   for (auto &op : loopOp.getBody()->getOperations()) {
-    if (auto loadOp = ::mlir::dyn_cast<::mlir::xegpu::LoadNdOp>(op)) {
+    if (auto loadOp = dyn_cast<xegpu::LoadNdOp>(op)) {
       if (!loadOp->hasOneUse()) {
         continue; // assume that load is only used once in dpas op
       }
       // FIXME more generic memory effect check
-      auto maybeDpasOp = findUserInRegion<::mlir::xegpu::DpasOp>(
-          loadOp.getResult(), loopOp.getRegion());
+      auto maybeDpasOp = findUserInRegion<xegpu::DpasOp>(loadOp.getResult(),
+                                                         loopOp.getRegion());
       if (maybeDpasOp) {
         auto dpasOp = *maybeDpasOp;
         if (dpasOp.getAcc() == loadOp.getResult()) {
@@ -534,12 +516,12 @@ void foldRedundantLoadOps(::mlir::transform::TransformRewriter &rewriter,
   }
 }
 
-void castDpasAccumulatorType(::mlir::transform::TransformRewriter &rewriter,
-                             ::mlir::scf::ForOp loopOp) {
+void castDpasAccumulatorType(transform::TransformRewriter &rewriter,
+                             scf::ForOp loopOp) {
   for (auto &op : loopOp.getBody()->getOperations()) {
     // FIXME convert this to a helper function
     // find loop-invariant load and store ops
-    auto loadOp = ::mlir::dyn_cast<::mlir::xegpu::LoadNdOp>(op);
+    auto loadOp = dyn_cast<xegpu::LoadNdOp>(op);
     if (!loadOp) {
       continue;
     }
@@ -552,8 +534,8 @@ void castDpasAccumulatorType(::mlir::transform::TransformRewriter &rewriter,
       continue;
     }
     LLVM_DEBUG(llvm::dbgs() << "Found load op: " << loadOp.getLoc() << "\n");
-    auto maybeStoreOp = findUserInRegion<::mlir::xegpu::StoreNdOp>(
-        loadOp.getResult(), loopOp.getRegion());
+    auto maybeStoreOp = findUserInRegion<xegpu::StoreNdOp>(loadOp.getResult(),
+                                                           loopOp.getRegion());
     if (!maybeStoreOp) {
       LLVM_DEBUG(llvm::dbgs() << "No store op found for load op, skipping.\n");
       continue;
@@ -566,7 +548,7 @@ void castDpasAccumulatorType(::mlir::transform::TransformRewriter &rewriter,
     }
     LLVM_DEBUG(llvm::dbgs() << "Found store op: " << storeOp.getLoc() << "\n");
     // Dpas specific
-    auto maybeDpasOp = getUserOfType<::mlir::xegpu::DpasOp>(loadOp.getValue());
+    auto maybeDpasOp = getUserOfType<xegpu::DpasOp>(loadOp.getValue());
     if (!maybeDpasOp) {
       LLVM_DEBUG(llvm::dbgs() << "No dpas op found for load op, skipping.\n");
       continue;
@@ -575,79 +557,75 @@ void castDpasAccumulatorType(::mlir::transform::TransformRewriter &rewriter,
     auto dpasOp = *maybeDpasOp;
     rewriter.setInsertionPointAfter(loadOp);
     // DPAS only works with f32 accumulators
-    auto cTileShape =
-        ::mlir::cast<::mlir::ShapedType>(loadOp.getResult().getType());
+    auto cTileShape = cast<ShapedType>(loadOp.getResult().getType());
     auto dpasResType =
-        ::mlir::VectorType::get(cTileShape.getShape(), rewriter.getF32Type());
+        VectorType::get(cTileShape.getShape(), rewriter.getF32Type());
     // cast C tile to f32
-    auto castedLoad = rewriter.create<::mlir::arith::ExtFOp>(
-        loadOp.getLoc(), dpasResType, loadedVect);
+    auto castedLoad = rewriter.create<arith::ExtFOp>(loadOp.getLoc(),
+                                                     dpasResType, loadedVect);
     // replace dpas op
     rewriter.setInsertionPointAfter(dpasOp);
-    auto newDpasOp = rewriter.create<::mlir::xegpu::DpasOp>(
+    auto newDpasOp = rewriter.create<xegpu::DpasOp>(
         dpasOp.getLoc(), dpasResType,
-        ::mlir::ValueRange{dpasOp.getLhs(), dpasOp.getRhs(), castedLoad});
+        ValueRange{dpasOp.getLhs(), dpasOp.getRhs(), castedLoad});
     // add a reverse cast to the dpas op result
-    auto castedDpasRes = rewriter.create<::mlir::arith::TruncFOp>(
+    auto castedDpasRes = rewriter.create<arith::TruncFOp>(
         dpasOp.getLoc(), loadOp.getResult().getType(), newDpasOp.getResult());
     storeOp.getValueMutable().assign(castedDpasRes);
     rewriter.replaceOp(dpasOp, newDpasOp);
   }
 }
 
-::mlir::LogicalResult
-insertThreadSync(::mlir::transform::TransformRewriter &rewriter,
-                 ::mlir::scf::ForOp loopOp) {
+LogicalResult insertThreadSync(transform::TransformRewriter &rewriter,
+                               scf::ForOp loopOp) {
   rewriter.setInsertionPointToStart(loopOp.getBody());
-  auto maybeKDimSize = mlir::getConstantIntValue(loopOp.getUpperBound());
+  auto maybeKDimSize = getConstantIntValue(loopOp.getUpperBound());
   if (!maybeKDimSize) {
     LLVM_DEBUG(llvm::dbgs() << "K loop upper bound not a constant\n");
-    return ::mlir::failure();
+    return failure();
   }
   int kDimSize = *maybeKDimSize;
   auto loc = loopOp.getLoc();
   // FIXME compute sync step based on tile size.
   int syncFreq = 4;
   int maxSyncStep = 1024;
-  auto zero = rewriter.create<::mlir::arith::ConstantIndexOp>(loc, 0);
+  auto zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
   int syncStep =
       std::min(std::max(kDimSize / syncFreq, maxSyncStep), maxSyncStep);
-  auto syncStepConst =
-      rewriter.create<::mlir::arith::ConstantIndexOp>(loc, syncStep);
-  auto loopStepMod = rewriter.create<::mlir::arith::RemUIOp>(
+  auto syncStepConst = rewriter.create<arith::ConstantIndexOp>(loc, syncStep);
+  auto loopStepMod = rewriter.create<arith::RemUIOp>(
       loc, loopOp.getInductionVar(), syncStepConst);
-  auto syncBlockCond = rewriter.create<::mlir::arith::CmpIOp>(
-      loc, ::mlir::arith::CmpIPredicate::eq, loopStepMod, zero);
-  rewriter.create<::mlir::scf::IfOp>(
+  auto syncBlockCond = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::eq, loopStepMod, zero);
+  rewriter.create<scf::IfOp>(
       loc, syncBlockCond,
       /*thenBuilder=*/
-      [](::mlir::OpBuilder &b, ::mlir::Location loc) {
-        b.create<::mlir::gpu::BarrierOp>(loc);
-        b.create<::mlir::scf::YieldOp>(loc);
+      [](OpBuilder &b, Location loc) {
+        b.create<gpu::BarrierOp>(loc);
+        b.create<scf::YieldOp>(loc);
       },
       /*elseBuilder=*/nullptr);
-  return ::mlir::success();
+  return success();
 }
 
-::mlir::DiagnosedSilenceableFailure
-mlir::transform::XeGPUHoistDescOp::applyToOne(
-    ::mlir::transform::TransformRewriter &rewriter, ::mlir::Operation *target,
-    ::mlir::transform::ApplyToEachResultList &results,
-    ::mlir::transform::TransformState &state) {
+DiagnosedSilenceableFailure transform::XeGPUHoistDescOp::applyToOne(
+    transform::TransformRewriter &rewriter, Operation *target,
+    transform::ApplyToEachResultList &results,
+    transform::TransformState &state) {
 
-  auto loopOp = ::mlir::dyn_cast<::mlir::scf::ForOp>(target);
+  auto loopOp = dyn_cast<scf::ForOp>(target);
   if (!loopOp) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Expected a scf.for op, but got: " << target->getName();
   }
 
-  if (mlir::failed(insertOffsetUpdateOps(rewriter, loopOp))) {
-    return mlir::emitSilenceableFailure(getLoc())
+  if (failed(insertOffsetUpdateOps(rewriter, loopOp))) {
+    return emitSilenceableFailure(getLoc())
            << "No desc ops found in the loop body " << target->getName();
   }
   auto newLoopOp = hoistDescOps(rewriter, loopOp);
-  if (::mlir::failed(newLoopOp)) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
+  if (failed(newLoopOp)) {
+    auto diag = emitSilenceableFailure(getLoc())
                 << "Failed to hoist xegpu.create_nd_desc ops";
     diag.attachNote(loopOp.getLoc()) << "loop op";
     return diag;
@@ -658,37 +636,36 @@ mlir::transform::XeGPUHoistDescOp::applyToOne(
   return DiagnosedSilenceableFailure::success();
 }
 
-void mlir::transform::XeGPUHoistDescOp::getEffects(
-    ::llvm::SmallVectorImpl<::mlir::MemoryEffects::EffectInstance> &effects) {
+void transform::XeGPUHoistDescOp::getEffects(
+    ::llvm::SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   consumesHandle(getLoopMutable(), effects);
   producesHandle(getOperation()->getOpResults(), effects);
   modifiesPayload(effects);
 }
 
-::mlir::DiagnosedSilenceableFailure
-mlir::transform::XeGPUHoistLoadStoreOp::applyToOne(
-    ::mlir::transform::TransformRewriter &rewriter, ::mlir::Operation *target,
-    ::mlir::transform::ApplyToEachResultList &results,
-    ::mlir::transform::TransformState &state) {
+DiagnosedSilenceableFailure transform::XeGPUHoistLoadStoreOp::applyToOne(
+    transform::TransformRewriter &rewriter, Operation *target,
+    transform::ApplyToEachResultList &results,
+    transform::TransformState &state) {
 
-  auto loopOp = ::mlir::dyn_cast<::mlir::scf::ForOp>(target);
+  auto loopOp = dyn_cast<scf::ForOp>(target);
   if (!loopOp) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Expected a scf.for op, but got: " << target->getName();
   }
 
   castDpasAccumulatorType(rewriter, loopOp);
   auto newLoopOp = hoistLoadStoreOps(rewriter, loopOp);
-  if (::mlir::failed(newLoopOp)) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
+  if (failed(newLoopOp)) {
+    auto diag = emitSilenceableFailure(getLoc())
                 << "Failed to hoist load/store ops";
     diag.attachNote(loopOp.getLoc()) << "loop op";
     return diag;
   }
   foldRedundantLoadOps(rewriter, *newLoopOp);
   loopOp = *newLoopOp;
-  if (::mlir::failed(insertThreadSync(rewriter, loopOp))) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
+  if (failed(insertThreadSync(rewriter, loopOp))) {
+    auto diag = emitSilenceableFailure(getLoc())
                 << "Failed to add thread sync ops";
     diag.attachNote(loopOp.getLoc()) << "loop op";
     return diag;
@@ -697,17 +674,17 @@ mlir::transform::XeGPUHoistLoadStoreOp::applyToOne(
   return DiagnosedSilenceableFailure::success();
 }
 
-void mlir::transform::XeGPUHoistLoadStoreOp::getEffects(
-    ::llvm::SmallVectorImpl<::mlir::MemoryEffects::EffectInstance> &effects) {
+void transform::XeGPUHoistLoadStoreOp::getEffects(
+    ::llvm::SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   consumesHandle(getLoopMutable(), effects);
   producesHandle(getOperation()->getOpResults(), effects);
   modifiesPayload(effects);
 }
 
-std::optional<::mlir::Value>
-getIthSubtile(::mlir::transform::TransformRewriter &rewriter,
-              ::mlir::Value &source, ::mlir::Value &index,
-              ::mlir::Value &upperBound, llvm::ArrayRef<int64_t> &tileSize) {
+std::optional<Value> getIthSubtile(transform::TransformRewriter &rewriter,
+                                   Value &source, Value &index,
+                                   Value &upperBound,
+                                   llvm::ArrayRef<int64_t> &tileSize) {
   auto defOp = source.getDefiningOp();
   if (!defOp) {
     LLVM_DEBUG(llvm::dbgs() << "No defining op.\n");
@@ -717,8 +694,8 @@ getIthSubtile(::mlir::transform::TransformRewriter &rewriter,
   auto loc = defOp->getLoc();
 
   llvm::ArrayRef<int64_t> srcShape =
-      ::mlir::cast<::mlir::ShapedType>(source.getType()).getShape();
-  if (::mlir::ShapedType::isDynamicShape(srcShape)) {
+      cast<ShapedType>(source.getType()).getShape();
+  if (ShapedType::isDynamicShape(srcShape)) {
     LLVM_DEBUG(llvm::dbgs() << "Expecting memref with static shape.\n");
     return std::nullopt;
   }
@@ -727,10 +704,10 @@ getIthSubtile(::mlir::transform::TransformRewriter &rewriter,
                << "Source shape is not divisible by tile tileSize.\n");
     return std::nullopt;
   }
-  ::mlir::SmallVector<int64_t, 2> grid{srcShape[0] / tileSize[0],
-                                       srcShape[1] / tileSize[1]};
+  SmallVector<int64_t, 2> grid{srcShape[0] / tileSize[0],
+                               srcShape[1] / tileSize[1]};
   auto nGrid = grid[0] * grid[1];
-  auto maybeUpperBound = mlir::getConstantIntValue(upperBound);
+  auto maybeUpperBound = getConstantIntValue(upperBound);
   if (!maybeUpperBound) {
     LLVM_DEBUG(llvm::dbgs() << "Upper bound is not a constant.\n");
     return std::nullopt;
@@ -743,48 +720,40 @@ getIthSubtile(::mlir::transform::TransformRewriter &rewriter,
   }
   // linear to 2d tile index
   auto nColTiles =
-      rewriter.create<::mlir::arith::ConstantIndexOp>(loc, grid[1]).getResult();
-  auto rowIndex =
-      rewriter.create<::mlir::arith::DivSIOp>(loc, index, nColTiles);
-  auto colIndex =
-      rewriter.create<::mlir::arith::RemSIOp>(loc, index, nColTiles);
+      rewriter.create<arith::ConstantIndexOp>(loc, grid[1]).getResult();
+  auto rowIndex = rewriter.create<arith::DivSIOp>(loc, index, nColTiles);
+  auto colIndex = rewriter.create<arith::RemSIOp>(loc, index, nColTiles);
   // calculate tile offset
   auto tileRowsCst =
-      rewriter.create<::mlir::arith::ConstantIndexOp>(loc, tileSize[0])
-          .getResult();
+      rewriter.create<arith::ConstantIndexOp>(loc, tileSize[0]).getResult();
   auto tileColsCst =
-      rewriter.create<::mlir::arith::ConstantIndexOp>(loc, tileSize[1])
-          .getResult();
-  auto row_offset =
-      rewriter.create<::mlir::arith::MulIOp>(loc, tileRowsCst, rowIndex);
-  auto col_offset =
-      rewriter.create<::mlir::arith::MulIOp>(loc, tileColsCst, colIndex);
+      rewriter.create<arith::ConstantIndexOp>(loc, tileSize[1]).getResult();
+  auto row_offset = rewriter.create<arith::MulIOp>(loc, tileRowsCst, rowIndex);
+  auto col_offset = rewriter.create<arith::MulIOp>(loc, tileColsCst, colIndex);
   // create a subview with the calculated offset and size
-  auto offsets = ::mlir::getMixedValues(
-      {::mlir::ShapedType::kDynamic, ::mlir::ShapedType::kDynamic},
-      {row_offset, col_offset}, rewriter);
-  auto sizes = ::mlir::getMixedValues({tileSize[0], tileSize[1]}, {}, rewriter);
-  auto strides = ::mlir::getMixedValues({1, 1}, {}, rewriter);
-  auto subview = rewriter.create<::mlir::memref::SubViewOp>(
-      loc, source, offsets, sizes, strides);
+  auto offsets = getMixedValues({ShapedType::kDynamic, ShapedType::kDynamic},
+                                {row_offset, col_offset}, rewriter);
+  auto sizes = getMixedValues({tileSize[0], tileSize[1]}, {}, rewriter);
+  auto strides = getMixedValues({1, 1}, {}, rewriter);
+  auto subview =
+      rewriter.create<memref::SubViewOp>(loc, source, offsets, sizes, strides);
   return subview.getResult();
 }
 
-::mlir::DiagnosedSilenceableFailure
-mlir::transform::XeGPUInsertPrefetchOp::applyToOne(
-    ::mlir::transform::TransformRewriter &rewriter, ::mlir::Operation *target,
-    ::mlir::transform::ApplyToEachResultList &results,
-    ::mlir::transform::TransformState &state) {
+DiagnosedSilenceableFailure transform::XeGPUInsertPrefetchOp::applyToOne(
+    transform::TransformRewriter &rewriter, Operation *target,
+    transform::ApplyToEachResultList &results,
+    transform::TransformState &state) {
 
-  auto matmulOp = ::mlir::dyn_cast<::mlir::linalg::MatmulOp>(target);
+  auto matmulOp = dyn_cast<linalg::MatmulOp>(target);
   if (!matmulOp) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Expected a linalg.matmul op, but got: " << target->getName();
   }
 
-  auto loopOp = matmulOp->getParentOfType<::mlir::scf::ForOp>();
+  auto loopOp = matmulOp->getParentOfType<scf::ForOp>();
   if (!loopOp) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
+    auto diag = emitSilenceableFailure(getLoc())
                 << "Expected a scf.for op as parent of the matmul op";
     diag.attachNote(loopOp.getLoc()) << "parent op";
     return diag;
@@ -793,58 +762,55 @@ mlir::transform::XeGPUInsertPrefetchOp::applyToOne(
   // defines which matmul operand to prefetch
   int64_t tileIndex = getTileIndex();
   if (tileIndex < 0 || tileIndex >= 2) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Invalid tile index: " << tileIndex
            << ", expected 0 or 1 for A or B operand";
   }
   // prefetch tile size
   llvm::ArrayRef<int64_t> tileSize = getTileSize();
   if (tileSize.size() != 2) {
-    return mlir::emitSilenceableFailure(getLoc()) << "Expected 2d tile size";
+    return emitSilenceableFailure(getLoc()) << "Expected 2d tile size";
   }
   // // grid for the subtiling
   // llvm::ArrayRef<int64_t> tileGrid = getGrid();
   // if (tileGrid.size() != 2) {
-  //   return mlir::emitSilenceableFailure(getLoc())
+  //   return emitSilenceableFailure(getLoc())
   //          << "Expected tile grid of size 2";
   // }
   // clone k loop with only A tile subview op
   rewriter.setInsertionPoint(loopOp);
   auto cloned = rewriter.clone(*loopOp.getOperation());
-  auto newLoopOp = ::mlir::cast<::mlir::scf::ForOp>(cloned);
+  auto newLoopOp = cast<scf::ForOp>(cloned);
 
   // get cloned matmul and its operand tile
-  auto maybeMatmulOp = llvm::find_if(
-      newLoopOp.getBody()->getOperations(), [](mlir::Operation &op) {
-        return mlir::isa<::mlir::linalg::MatmulOp>(op);
-      });
+  auto maybeMatmulOp =
+      llvm::find_if(newLoopOp.getBody()->getOperations(),
+                    [](Operation &op) { return isa<linalg::MatmulOp>(op); });
   if (maybeMatmulOp == newLoopOp.getBody()->getOperations().end()) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "No linalg.matmul op found in the loop body";
   }
-  ::mlir::linalg::MatmulOp clonedMatmulOp =
-      ::mlir::cast<::mlir::linalg::MatmulOp>(*maybeMatmulOp);
+  linalg::MatmulOp clonedMatmulOp = cast<linalg::MatmulOp>(*maybeMatmulOp);
   auto aTile = clonedMatmulOp.getInputs()[tileIndex];
 
-  auto tileSubviewOp = aTile.getDefiningOp<::mlir::memref::SubViewOp>();
+  auto tileSubviewOp = aTile.getDefiningOp<memref::SubViewOp>();
   if (!tileSubviewOp) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Expected operand tile to be a associated with a memref.subview "
               "op, but got: "
            << aTile.getDefiningOp()->getName();
   }
   // create a subview for cooperative prefetching
   rewriter.setInsertionPoint(newLoopOp);
-  auto parentLoop =
-      newLoopOp.getOperation()->getParentOfType<::mlir::scf::ForallOp>();
+  auto parentLoop = newLoopOp.getOperation()->getParentOfType<scf::ForallOp>();
   if (!parentLoop) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Expecting scf.forall op as parent of the loop";
   }
   auto subGroupIndVars = parentLoop.getInductionVars();
   auto subGroupUpperBound = parentLoop.getUpperBound(rewriter);
   if (subGroupIndVars.size() != 2) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Expecting a two induction variables in subgroup loop.";
   }
   // A tile is reused by all threads defined by the 2nd induction variable
@@ -853,40 +819,39 @@ mlir::transform::XeGPUInsertPrefetchOp::applyToOne(
       getIthSubtile(rewriter, aTile, subGroupIndVars[indVarIndex],
                     subGroupUpperBound[indVarIndex], tileSize);
   if (!maybePrefetchTile) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Failed to generate prefetch subtile";
   }
   auto prefetchTile = *maybePrefetchTile;
 
   // add xegpu desc op for the tile
-  auto aTileType = ::mlir::cast<::mlir::ShapedType>(prefetchTile.getType());
-  if (::mlir::ShapedType::isDynamicShape(aTileType.getShape())) {
-    return mlir::emitSilenceableFailure(getLoc())
+  auto aTileType = cast<ShapedType>(prefetchTile.getType());
+  if (ShapedType::isDynamicShape(aTileType.getShape())) {
+    return emitSilenceableFailure(getLoc())
            << "Prefetch tile must have static shape";
   }
-  ::mlir::SmallVector<int64_t> descShape(aTileType.getShape());
+  SmallVector<int64_t> descShape(aTileType.getShape());
   auto descType = xegpu::TensorDescType::get(
       descShape, aTileType.getElementType(), /*array_length=*/1,
       /*boundary_check=*/true, xegpu::MemorySpace::Global);
   auto loc = prefetchTile.getLoc();
-  ::mlir::Value zero = rewriter.create<::mlir::arith::ConstantIndexOp>(loc, 0);
-  auto zeroOffset = ::mlir::getAsOpFoldResult({zero, zero});
-  auto descOp = rewriter.create<::mlir::xegpu::CreateNdDescOp>(
-      loc, descType,
-      ::mlir::dyn_cast<::mlir::TypedValue<::mlir::MemRefType>>(prefetchTile),
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  auto zeroOffset = getAsOpFoldResult({zero, zero});
+  auto descOp = rewriter.create<xegpu::CreateNdDescOp>(
+      loc, descType, dyn_cast<TypedValue<MemRefType>>(prefetchTile),
       zeroOffset);
   // add prefetch op
   auto ctx = rewriter.getContext();
   auto readCacheHint =
       xegpu::CachePolicyAttr::get(ctx, xegpu::CachePolicy::CACHED);
-  rewriter.create<::mlir::xegpu::PrefetchNdOp>(
-      loc, descOp.getResult(), readCacheHint, readCacheHint, readCacheHint);
+  rewriter.create<xegpu::PrefetchNdOp>(loc, descOp.getResult(), readCacheHint,
+                                       readCacheHint, readCacheHint);
 
   // clean up matmul and unused subviews
   rewriter.eraseOp(clonedMatmulOp);
-  ::mlir::SmallVector<::mlir::Operation *> toRemoveOps;
+  SmallVector<Operation *> toRemoveOps;
   for (auto &op : newLoopOp.getBody()->getOperations()) {
-    if (auto subviewOp = ::mlir::dyn_cast<::mlir::memref::SubViewOp>(op)) {
+    if (auto subviewOp = dyn_cast<memref::SubViewOp>(op)) {
       if (subviewOp.use_empty()) {
         toRemoveOps.push_back(&op);
       }
@@ -901,25 +866,25 @@ mlir::transform::XeGPUInsertPrefetchOp::applyToOne(
   // Find all create desc operations in the loop body
   SmallVector<Operation *> createDescOps;
   for (auto &op : newLoopOp.getBody()->getOperations()) {
-    if (isa<::mlir::xegpu::CreateNdDescOp>(op)) {
+    if (isa<xegpu::CreateNdDescOp>(op)) {
       createDescOps.push_back(&op);
     }
   }
   if (createDescOps.empty()) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
+    auto diag = emitSilenceableFailure(getLoc())
                 << "No xegpu.create_nd_desc ops found in the loop body";
     diag.attachNote(newLoopOp.getLoc()) << "loop op";
     return diag;
   }
 
   for (auto &op : createDescOps) {
-    auto descOp = ::mlir::cast<::mlir::xegpu::CreateNdDescOp>(op);
+    auto descOp = cast<xegpu::CreateNdDescOp>(op);
     descOp = foldSubviewIntoDescOp(rewriter, descOp);
     insertOffsetUpdateOp(rewriter, newLoopOp, descOp);
   }
   auto maybeNewLoopOp = hoistDescOps(rewriter, newLoopOp);
-  if (::mlir::failed(maybeNewLoopOp)) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
+  if (failed(maybeNewLoopOp)) {
+    auto diag = emitSilenceableFailure(getLoc())
                 << "Failed to hoist xegpu.create_nd_desc ops";
     diag.attachNote(newLoopOp.getLoc()) << "loop op";
     return diag;
@@ -928,11 +893,10 @@ mlir::transform::XeGPUInsertPrefetchOp::applyToOne(
   // ------------------
 
   // peel first iteration of the loop
-  ::mlir::scf::ForOp firstLoopOp;
-  if (::mlir::failed(::mlir::scf::peelForLoopFirstIteration(rewriter, newLoopOp,
-                                                            firstLoopOp))) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
-                << "Failed to peel the loop";
+  scf::ForOp firstLoopOp;
+  if (failed(
+          scf::peelForLoopFirstIteration(rewriter, newLoopOp, firstLoopOp))) {
+    auto diag = emitSilenceableFailure(getLoc()) << "Failed to peel the loop";
   }
 
   // reset lower bound back to original value
@@ -942,36 +906,35 @@ mlir::transform::XeGPUInsertPrefetchOp::applyToOne(
   return DiagnosedSilenceableFailure::success();
 }
 
-void mlir::transform::XeGPUInsertPrefetchOp::getEffects(
-    ::llvm::SmallVectorImpl<::mlir::MemoryEffects::EffectInstance> &effects) {
+void transform::XeGPUInsertPrefetchOp::getEffects(
+    ::llvm::SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   onlyReadsHandle(getMatmulMutable(), effects);
   producesHandle(getOperation()->getOpResults(), effects);
   modifiesPayload(effects);
 }
 
-::mlir::DiagnosedSilenceableFailure
-mlir::transform::XeGPUSetLoadTileOp::applyToOne(
-    ::mlir::transform::TransformRewriter &rewriter, ::mlir::Operation *target,
-    ::mlir::transform::ApplyToEachResultList &results,
-    ::mlir::transform::TransformState &state) {
+DiagnosedSilenceableFailure transform::XeGPUSetLoadTileOp::applyToOne(
+    transform::TransformRewriter &rewriter, Operation *target,
+    transform::ApplyToEachResultList &results,
+    transform::TransformState &state) {
 
   auto loadTileShape = getTileSize();
   if (loadTileShape.size() != 2) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Expected tile sizes to be a 2D vector";
   }
 
   // defines DPAS operand to be converted
   int64_t tileIndex = getTileIndex();
   if (tileIndex < 0 || tileIndex >= 2) {
-    return mlir::emitSilenceableFailure(getLoc())
+    return emitSilenceableFailure(getLoc())
            << "Invalid tile index: " << tileIndex
            << ", expected 0 or 1 for A or B operand";
   }
 
-  auto forOp = ::mlir::dyn_cast<::mlir::scf::ForOp>(target);
+  auto forOp = dyn_cast<scf::ForOp>(target);
   if (!forOp) {
-    auto diag = mlir::emitSilenceableFailure(getLoc())
+    auto diag = emitSilenceableFailure(getLoc())
                 << "Expected a scf.for op, but got: " << target->getName();
     diag.attachNote(target->getLoc()) << "target op";
     return diag;
@@ -980,23 +943,23 @@ mlir::transform::XeGPUSetLoadTileOp::applyToOne(
   foldRedundantLoadOps(rewriter, forOp);
 
   // find all dpas ops and the desc op associated with their operand i
-  ::mlir::SmallVector<::mlir::xegpu::CreateNdDescOp> descOps;
+  SmallVector<xegpu::CreateNdDescOp> descOps;
   for (auto &op : forOp.getBody()->getOperations()) {
-    if (auto dpasOp = ::mlir::dyn_cast<::mlir::xegpu::DpasOp>(op)) {
+    if (auto dpasOp = dyn_cast<xegpu::DpasOp>(op)) {
       auto defOp = dpasOp.getOperand(tileIndex).getDefiningOp();
       if (!defOp) {
-        return mlir::emitSilenceableFailure(getLoc())
+        return emitSilenceableFailure(getLoc())
                << "DPAS op operand does not have a defining op";
       }
       auto producers = getProducerOpsInRegion(defOp, forOp.getRegion(), true);
-      auto maybeDescOp = llvm::find_if(producers, [&](::mlir::Operation *op) {
-        return mlir::isa<::mlir::xegpu::CreateNdDescOp>(op);
+      auto maybeDescOp = llvm::find_if(producers, [&](Operation *op) {
+        return isa<xegpu::CreateNdDescOp>(op);
       });
       if (maybeDescOp == producers.end()) {
-        return mlir::emitSilenceableFailure(getLoc())
+        return emitSilenceableFailure(getLoc())
                << "DPAS op operand does not have a desc op in the loop body";
       }
-      auto descOp = ::mlir::cast<::mlir::xegpu::CreateNdDescOp>(*maybeDescOp);
+      auto descOp = cast<xegpu::CreateNdDescOp>(*maybeDescOp);
       if (!llvm::is_contained(descOps, descOp)) {
         descOps.push_back(descOp);
       }
@@ -1006,8 +969,7 @@ mlir::transform::XeGPUSetLoadTileOp::applyToOne(
     LLVM_DEBUG(llvm::dbgs() << "No create desc ops found, returning.\n");
     return DiagnosedSilenceableFailure::success();
   }
-  llvm::DenseMap<std::tuple<::mlir::Value, int64_t, int64_t>, ::mlir::Value>
-      createdLoadTiles;
+  llvm::DenseMap<std::tuple<Value, int64_t, int64_t>, Value> createdLoadTiles;
   for (auto &descOp : descOps) {
     LLVM_DEBUG(llvm::dbgs()
                << "Processing desc op: " << descOp.getLoc() << "\n");
@@ -1015,19 +977,18 @@ mlir::transform::XeGPUSetLoadTileOp::applyToOne(
     // fold descriptor to parent subview; this is SG_k tile to DPAS tile view
     auto maybeFolded = foldSubview(rewriter, descOp);
     if (!maybeFolded) {
-      return mlir::emitSilenceableFailure(getLoc())
+      return emitSilenceableFailure(getLoc())
              << "Failed to fold subview into the descriptor op";
     }
     auto foldedDescOp = *maybeFolded;
 
     auto parentTileShape =
-        ::mlir::cast<::mlir::ShapedType>(foldedDescOp.getSource().getType())
-            .getShape();
-    if (::mlir::ShapedType::isDynamicShape(parentTileShape)) {
+        cast<ShapedType>(foldedDescOp.getSource().getType()).getShape();
+    if (ShapedType::isDynamicShape(parentTileShape)) {
       LLVM_DEBUG(llvm::dbgs() << "Loaded vector has dynamic shape.\n");
     }
     if (parentTileShape.size() != 2) {
-      return mlir::emitSilenceableFailure(getLoc())
+      return emitSilenceableFailure(getLoc())
              << "Expected memref.subview op to have 2D shape.";
     }
     LLVM_DEBUG(llvm::dbgs() << "  Parent tile size:  [" << parentTileShape[0]
@@ -1036,72 +997,71 @@ mlir::transform::XeGPUSetLoadTileOp::applyToOne(
                             << ", " << loadTileShape[1] << "]\n");
 
     auto targetTileShapeType =
-        ::mlir::cast<::mlir::ShapedType>(foldedDescOp.getResult().getType());
+        cast<ShapedType>(foldedDescOp.getResult().getType());
     auto targetTileShape = targetTileShapeType.getShape();
-    if (::mlir::ShapedType::isDynamicShape(targetTileShape)) {
+    if (ShapedType::isDynamicShape(targetTileShape)) {
       LLVM_DEBUG(llvm::dbgs() << "Loaded vector has dynamic shape.\n");
     }
     if (targetTileShape.size() != 2) {
-      return mlir::emitSilenceableFailure(getLoc())
+      return emitSilenceableFailure(getLoc())
              << "Expected memref.subview op to have 2D shape.";
     }
     LLVM_DEBUG(llvm::dbgs() << "  Target tile shape: [" << targetTileShape[0]
                             << ", " << targetTileShape[1] << "]\n");
 
     // get target tile offsets from the desc op
-    mlir::SmallVector<mlir::Value> targetDynOffsets;
-    mlir::SmallVector<int64_t> targetStaOffsets;
-    ::mlir::dispatchIndexOpFoldResults(foldedDescOp.getMixedOffsets(),
-                                       targetDynOffsets, targetStaOffsets);
-    if (::mlir::ShapedType::isDynamicShape(targetStaOffsets)) {
-      return mlir::emitSilenceableFailure(getLoc())
+    SmallVector<Value> targetDynOffsets;
+    SmallVector<int64_t> targetStaOffsets;
+    dispatchIndexOpFoldResults(foldedDescOp.getMixedOffsets(), targetDynOffsets,
+                               targetStaOffsets);
+    if (ShapedType::isDynamicShape(targetStaOffsets)) {
+      return emitSilenceableFailure(getLoc())
              << "Expecting fully static offsets in desc op.";
     }
 
     if (loadTileShape[0] > parentTileShape[0] ||
         loadTileShape[1] > parentTileShape[1]) {
-      return mlir::emitSilenceableFailure(getLoc())
+      return emitSilenceableFailure(getLoc())
              << "Load tile shape is larger than parent tile shape: "
              << "[" << loadTileShape[0] << ", " << loadTileShape[1] << "] vs ["
              << parentTileShape[0] << ", " << parentTileShape[1] << "]";
     }
     if (targetTileShape[0] > loadTileShape[0] ||
         targetTileShape[1] > loadTileShape[1]) {
-      return mlir::emitSilenceableFailure(getLoc())
+      return emitSilenceableFailure(getLoc())
              << "Target tile shape is larger than load tile shape: "
              << "[" << targetTileShape[0] << ", " << targetTileShape[1]
              << "] vs [" << loadTileShape[0] << ", " << loadTileShape[1] << "]";
     }
 
     // offset for target tile in the larger load tile
-    ::mlir::SmallVector<int64_t> targetNestedOffsets{
+    SmallVector<int64_t> targetNestedOffsets{
         targetStaOffsets[0] % loadTileShape[0],
         targetStaOffsets[1] % loadTileShape[1]};
     // offset for the load tile in the parent tile
-    ::mlir::SmallVector<int64_t> loadTileOffsets{
+    SmallVector<int64_t> loadTileOffsets{
         targetStaOffsets[0] - targetNestedOffsets[0],
         targetStaOffsets[1] - targetNestedOffsets[1]};
 
     auto loc = descOp.getLoc();
     bool useVnni = tileIndex == 1;
-    mlir::VectorType loadVecType = mlir::VectorType::get(
-        loadTileShape, targetTileShapeType.getElementType());
+    VectorType loadVecType =
+        VectorType::get(loadTileShape, targetTileShapeType.getElementType());
     if (useVnni) {
       loadVecType =
           getVnniVector(loadTileShape, targetTileShapeType.getElementType());
     }
-    auto maybeLoadOp =
-        getUserOfType<::mlir::xegpu::LoadNdOp>(foldedDescOp.getResult());
+    auto maybeLoadOp = getUserOfType<xegpu::LoadNdOp>(foldedDescOp.getResult());
     if (!maybeLoadOp) {
-      return mlir::emitSilenceableFailure(getLoc())
+      return emitSilenceableFailure(getLoc())
              << "xegpu.create_nd_tdesc op without a xegpu.load_nd op.";
     }
     auto oldLoadOp = *maybeLoadOp;
 
     // create new desc/load op, or use cached one
-    std::tuple<::mlir::Value, int64_t, int64_t> loadTileKey{
+    std::tuple<Value, int64_t, int64_t> loadTileKey{
         foldedDescOp.getSource(), loadTileOffsets[0], loadTileOffsets[1]};
-    ::mlir::Value loadedTileValue;
+    Value loadedTileValue;
     if (llvm::is_contained(createdLoadTiles, loadTileKey)) {
       loadedTileValue = createdLoadTiles[loadTileKey];
     } else {
@@ -1111,16 +1071,15 @@ mlir::transform::XeGPUSetLoadTileOp::applyToOne(
           loadTileShape, targetTileShapeType.getElementType(),
           /*array_length=*/1,
           /*boundary_check=*/true, xegpu::MemorySpace::Global);
-      auto newDescOp = rewriter.create<::mlir::xegpu::CreateNdDescOp>(
+      auto newDescOp = rewriter.create<xegpu::CreateNdDescOp>(
           loc, descType,
-          ::mlir::dyn_cast<::mlir::TypedValue<::mlir::MemRefType>>(
-              foldedDescOp.getSource()),
-          ::mlir::getAsIndexOpFoldResult(ctx, loadTileOffsets));
+          dyn_cast<TypedValue<MemRefType>>(foldedDescOp.getSource()),
+          getAsIndexOpFoldResult(ctx, loadTileOffsets));
 
       // create new load op
       // use packed attribute for B tile
-      mlir::UnitAttr packedAttr =
-          useVnni ? mlir::UnitAttr::get(rewriter.getContext()) : nullptr;
+      UnitAttr packedAttr =
+          useVnni ? UnitAttr::get(rewriter.getContext()) : nullptr;
       auto readCacheHint =
           xegpu::CachePolicyAttr::get(ctx, xegpu::CachePolicy::CACHED);
       auto loadOp = rewriter.create<xegpu::LoadNdOp>(
@@ -1152,8 +1111,8 @@ mlir::transform::XeGPUSetLoadTileOp::applyToOne(
         /*sizes=*/ArrayRef<int64_t>{targetFlatSize},
         /*strides=*/ArrayRef<int64_t>{1});
     // reshape to target shape
-    auto targetVecType = mlir::VectorType::get(
-        targetTileShape, targetTileShapeType.getElementType());
+    auto targetVecType =
+        VectorType::get(targetTileShape, targetTileShapeType.getElementType());
     if (useVnni) {
       targetVecType =
           getVnniVector(targetTileShape, targetTileShapeType.getElementType());
@@ -1168,14 +1127,14 @@ mlir::transform::XeGPUSetLoadTileOp::applyToOne(
   return DiagnosedSilenceableFailure::success();
 }
 
-void mlir::transform::XeGPUSetLoadTileOp::getEffects(
-    ::llvm::SmallVectorImpl<::mlir::MemoryEffects::EffectInstance> &effects) {
+void transform::XeGPUSetLoadTileOp::getEffects(
+    ::llvm::SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   onlyReadsHandle(getLoopMutable(), effects);
   // consumesHandle(getDescMutable(), effects);
   // producesHandle(getOperation()->getOpResults(), effects);
   modifiesPayload(effects);
 }
 
-void registerXeGPUTransformOps(::mlir::DialectRegistry &registry) {
+void registerXeGPUTransformOps(DialectRegistry &registry) {
   registry.addExtensions<XeGPUTransformOps>();
 }
