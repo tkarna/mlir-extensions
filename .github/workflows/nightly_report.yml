@@ -18,8 +18,8 @@ jobs:
 
   invoke-gpu-tests:
     needs: invoke-sync
-    name: Invoke main Build_GPU Workflow
-    uses: ./.github/workflows/build_gpu.yml
+    name: Invoke main Build_GPU Workflow (BMG)
+    uses: ./.github/workflows/build_bmg.yml
     secrets: inherit
 
   invoke-gpu-fs-sim-tests:
