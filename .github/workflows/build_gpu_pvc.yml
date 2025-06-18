@@ -1,13 +1,14 @@
 name: GPU Build
 
-#on:
-#  pull_request:
-#    branches:
+on:
+  pull_request:
+    branches:
+       - dummy      
 #      - main
 #      - upstream
 #      - 'dist-ndarray'
-#  workflow_dispatch:
-#  workflow_call:
+  workflow_dispatch:
+  workflow_call:
 
 jobs:
   build:
